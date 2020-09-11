@@ -1,0 +1,115 @@
+---
+title: "Kankor Clean-up"
+author: "Abuzar Royesh"
+date: "01/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+##Libraries
+library(tidyverse)
+library(readxl)
+
+kankor <- read_csv("kankor_cleaned.csv", guess_max = 500000)
+
+##Additional Files
+moe <- 
+  read_xlsx("data/moe_school_data.xlsx") %>% 
+  select(ProvinceName, DistrictID, DistrictName, SchoolID, SchoolName, `Village Name`) %>% 
+  # select(ProvinceName, SchoolID, SchoolName) %>% 
+  mutate(
+    ProvinceName = 
+      recode(
+        ProvinceName, 
+        "Kabul Province" = "Kabul", 
+        "Bamyan" = "Bamiyan", 
+        "Kabul City" = "Kabul", 
+        "Hilmand" = "Helmand", 
+        "Hirat" = "Herat", 
+        "Paktia" = "Paktiya", 
+        "Sar i Pul" = "Sar-e-pul"
+      )
+  )
+
+correct_dist_ids <- 
+  read_xlsx("data/correct_district_ids.xlsx") %>% select(DistrictName, ADM2_PCODE, prov_origin)
+
+```
+
+
+```{r}
+cleaned_schools <- 
+  kankor %>% 
+  filter(!is.na(SchoolID)) %>% 
+  left_join(moe, by = c("SchoolID", "prov_origin" = "ProvinceName")) %>% 
+  select(-DistrictID) %>% 
+  left_join(correct_dist_ids, by = c("DistrictName", "prov_origin")) %>%  #Fixing the district codes
+  mutate(passed = if_else(passed == "Passed", 1, 0))
+```
+
+
+###Creating dataset for Shiny 
+
+```{r}
+mean_scores <-
+  cleaned_schools %>%
+  filter(!is.na(gender)) %>%
+  group_by(ADM2_PCODE, gender, year) %>%
+  summarize(
+    mean = mean(score, na.rm = TRUE),
+    n = n(),
+    passed = mean(passed)
+  ) %>%
+  full_join(
+    cleaned_schools %>%
+      group_by(ADM2_PCODE, year) %>%
+      summarize(
+        mean = mean(score, na.rm = TRUE),
+        n = n(),
+        passed = mean(passed)
+      ) %>%
+      mutate(gender = "All")
+  ) %>%
+  full_join(districts, by = c("ADM2_PCODE")) %>%
+  mutate(
+    desc =
+      str_glue(
+        "{ADM2_EN}, {ADM1_EN}
+        Number of Students: {n}
+        Average Score: {round(mean, 1)}
+        Percent Admitted: {round(passed * 100)}%"
+        )
+    ) %>%
+  mutate(n_trans = if_else(n > 600, 600, as.numeric(n))) %>%
+  gather(key = variable, value = value, mean, n_trans, passed) %>%
+  ungroup() %>%
+  mutate(
+    variable =
+      recode(
+        variable,
+        mean = "Average Score",
+        n_trans = "Number of Students",
+        passed = "Percent of Admitted Students"
+      ),
+    gender =
+      recode(
+        gender,
+        male = "Male",
+        female = "Female"
+      )
+  ) %>%
+  arrange(ADM2_PCODE) %>%
+  select(gender, year, n, ADM2_PCODE, desc, variable, value) %>%
+  filter(!is.na(n)) %>%
+  write_csv("mean_scores.csv")
+```
+
+
+
+
+
+
